@@ -79,9 +79,5 @@ Final Report
 
 cd bugiscan V1.0
 chmod +x *
-
-# install tool
 ./install.sh
-
-# use tool
 ./bugV1.0
