@@ -77,7 +77,17 @@ Final Report
 
 ## 📦 Installation
 
+#step1:
+git clone https://github.com/Anex-priyanshu/BugiScann.git
+
+#step2:
 cd bugiscan V1.0
+
+#step3:
 chmod +x *
+
+#step4:
 ./install.sh
+
+#step5:
 ./bugV1.0
