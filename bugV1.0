@@ -1,0 +1,172 @@
+#!/bin/bash
+# =========================================================
+# BugiScann v1.0 — High-Speed Bug Bounty Recon Framework
+# Developed by: Anex
+# Author: Hacker No Rule
+# =========================================================
+
+clear
+echo "================================================="
+echo "     🐞 BugiScann v1.0  — Automated Recon Tool   "
+echo "     ⚡ Developed by Anex | Hacker No Rule       "
+echo "================================================="
+echo ""
+
+read -p "🔍 Enter target domain (e.g. example.com): " domain
+
+if [ -z "$domain" ]; then
+    echo "❌ No domain entered. Exiting."
+    exit 1
+fi
+
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+START_TS=$(date +%s)
+
+timestamp=$(date +"%Y%m%d_%H%M")
+output="results_$domain"
+mkdir -p "$output"
+
+echo ""
+echo "[*] Scan started at: $START_TIME"
+echo "[*] Target: $domain"
+echo "[*] Output Directory: $output"
+echo "-------------------------------------------"
+
+# =========================================================
+# STEP 1: FAST Subdomain Enumeration (Parallel)
+# =========================================================
+echo "[+] Enumerating subdomains (fast mode)..."
+
+subfinder -silent -d "$domain" > "$output/subfinder.txt" &
+assetfinder --subs-only "$domain" > "$output/assetfinder.txt" &
+amass enum -passive -d "$domain" > "$output/amass.txt" &
+wait
+
+cat "$output"/subfinder.txt \
+    "$output"/assetfinder.txt \
+    "$output"/amass.txt | sort -u > "$output/all_subdomains.txt"
+
+sub_count=$(wc -l < "$output/all_subdomains.txt")
+echo "[✓] Subdomains collected: $sub_count"
+
+# =========================================================
+# STEP 2: Live Host Discovery (Optimized)
+# =========================================================
+echo "[+] Checking live hosts (HTTP/HTTPS)..."
+
+httpx -l "$output/all_subdomains.txt" \
+      -ports 80,443,8080,8443 \
+      -silent \
+      -threads 200 \
+      -status-code \
+      -title \
+      -tech-detect \
+      -o "$output/live_hosts.txt"
+
+echo "[+] Cleaning live hosts list..."
+
+cat "$output/live_hosts.txt" | awk '{print $1}' | sed 's/\/$//' > "$output/clean_live_hosts.txt"
+
+count=$(wc -l < "$output/clean_live_hosts.txt")
+echo "[✓] Clean hosts prepared: $count"
+
+# =========================================================
+# STEP 3: URL Collection (High Signal)
+# =========================================================
+echo "[+] Collecting URLs..."
+
+echo "[+] Running Waybackurls..."
+waybackurls < "$output/clean_live_hosts.txt" > "$output/urls_wayback.txt" &
+
+echo "[+] Running Katana..."
+katana -list "$output/clean_live_hosts.txt" \
+       -silent \
+       -d 3 \
+       -jc \
+       -o "$output/urls_katana.txt"
+wait
+
+echo "[✓] URL collection finished"
+
+cat "$output"/urls_*.txt | sort -u > "$output/all_urls.txt"
+
+url_count=$(wc -l < "$output/all_urls.txt")
+echo "[✓] URLs collected: $url_count"
+
+
+# =========================================================
+# STEP 4: Parameter Discovery (Selective)
+# =========================================================
+echo "[+] Discovering parameters..."
+
+echo "[+] Discovering parameters..."
+
+paramspider -d "$domain" -s
+
+if [ -f "results/$domain.txt" ]; then
+    mv "results/$domain.txt" "$output/paramspider.txt"
+else
+    echo "[!] ParamSpider output not found"
+fi
+
+arjun -i "$output/all_urls.txt" -t 50 -o "$output/arjun.json"
+
+# =========================================================
+# STEP 5: Vulnerability Scanning (Focused Templates)
+# =========================================================
+echo "[+] Running Nuclei (critical + high)..."
+
+nuclei -l "$output/live_hosts.txt" -severity critical,high,medium -rate-limit 150 -v | tee "$output/nuclei_results.txt"
+
+# =========================================================
+# STEP 6: XSS & SQLi (Smart Mode)
+# =========================================================
+echo "[+] XSS testing..."
+dalfox file "$output/all_urls.txt" \
+       --skip-bav \
+       --only-discovery \
+       -o "$output/xss.txt"
+
+echo "[+] SQL Injection testing (light)..."
+sqlmap -m "$output/all_urls.txt" \
+       --batch \
+       --level=1 \
+       --risk=1 \
+       --random-agent \
+       --output-dir="$output/sqlmap_results"
+
+# =========================================================
+# STEP 7: Cloud Asset Discovery
+# =========================================================
+echo "[+] Scanning for cloud buckets..."
+python3 -m s3scanner --domain "$domain" --output "$output/s3.txt"
+
+# =========================================================
+# SUMMARY
+# =========================================================
+END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+END_TS=$(date +%s)
+DURATION=$((END_TS - START_TS))
+
+echo ""
+echo "==========================================="
+echo "✅ Scan Completed Successfully"
+echo "-------------------------------------------"
+echo "👤 Developed by : Anex"
+echo "🛠 Author       : Hacker No Rule"
+echo "🕒 Start Time  : $START_TIME"
+echo "🕒 End Time    : $END_TIME"
+echo "⏱ Duration    : ${DURATION}s"
+echo "-------------------------------------------"
+
+live_count=$(wc -l < "$output/live_hosts.txt")
+url_count=$(wc -l < "$output/all_urls.txt")
+
+vuln_count=$(grep -Ei '^\[(critical|high|medium)\]' "$output/nuclei_results.txt" | wc -l)
+
+echo "📡 Live Hosts  : $live_count"
+echo "🌐 URLs Found : $url_count"
+echo "🚨 Vulns Found: $vuln_count"
+echo "📁 Reports    : $output/"
+echo "==========================================="
+
